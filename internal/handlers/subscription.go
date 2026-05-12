@@ -47,7 +47,6 @@ var dateRegex = regexp.MustCompile(`^(0[1-9]|1[0-2])-[0-9]{4}$`)
 // @Failure 422 {object} response.ErrorResponse
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions [post]
-// @Example request {"service_name":"Yandex Plus","price":400,"user_id":"60601fee-2bf1-4721-ae6f-7636e79a0cba","start_date":"07-2025"}
 func (h *SubscriptionHandler) Create(c *gin.Context) {
 	var req models.CreateSubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

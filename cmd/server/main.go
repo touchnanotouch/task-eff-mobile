@@ -1,3 +1,8 @@
+// @title Subscription Service API
+// @version 1.0.0
+// @description RESTful HTTP service for managing user subscriptions and cost aggregation
+// @host localhost:8080
+
 package main
 
 import (
@@ -65,7 +70,7 @@ func main() {
 
 	go func() {
 		log.Printf("Server starting on %s", addr)
-		log.Printf("Swagger UI: http://localhost:8080/swagger/index.html")
+		log.Printf("Swagger UI: http://%s/swagger/index.html", addr)
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)

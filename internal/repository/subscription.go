@@ -69,9 +69,11 @@ func (r *SubscriptionRepository) Create(ctx context.Context, sub *models.Subscri
 	return err
 }
 
+const selectCols = `id, service_name, price, user_id, start_date, end_date, created_at, updated_at`
+
 func (r *SubscriptionRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Subscription, error) {
 	var sub models.Subscription
-	query := `SELECT * FROM subscriptions WHERE id = $1`
+	query := `SELECT ` + selectCols + ` FROM subscriptions WHERE id = $1`
 
 	err := r.db.GetContext(ctx, &sub, query, id)
 	if err != nil {
@@ -87,7 +89,7 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 
 func (r *SubscriptionRepository) GetAll(ctx context.Context) ([]models.Subscription, error) {
 	var subs []models.Subscription
-	query := `SELECT * FROM subscriptions ORDER BY created_at DESC`
+	query := `SELECT ` + selectCols + ` FROM subscriptions ORDER BY created_at DESC`
 
 	err := r.db.SelectContext(ctx, &subs, query)
 	if err != nil {
@@ -98,12 +100,19 @@ func (r *SubscriptionRepository) GetAll(ctx context.Context) ([]models.Subscript
 }
 
 func (r *SubscriptionRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateSubscriptionRequest) (*models.Subscription, error) {
-	sub, err := r.GetByID(ctx, id)
+	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
-	if sub == nil {
-		return nil, nil
+	defer tx.Rollback()
+
+	var sub models.Subscription
+	err = tx.GetContext(ctx, &sub, `SELECT `+selectCols+` FROM subscriptions WHERE id = $1 FOR UPDATE`, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	if req.ServiceName != nil {
@@ -121,13 +130,11 @@ func (r *SubscriptionRepository) Update(ctx context.Context, id uuid.UUID, req *
 
 	sub.UpdatedAt = time.Now()
 
-	query := `
+	_, err = tx.ExecContext(ctx, `
 		UPDATE subscriptions 
 		SET service_name = $1, price = $2, start_date = $3, end_date = $4, updated_at = $5
 		WHERE id = $6
-	`
-
-	_, err = r.db.ExecContext(ctx, query,
+	`,
 		sub.ServiceName,
 		sub.Price,
 		sub.StartDate,
@@ -135,12 +142,15 @@ func (r *SubscriptionRepository) Update(ctx context.Context, id uuid.UUID, req *
 		sub.UpdatedAt,
 		id,
 	)
-
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update exec: %w", err)
 	}
 
-	return sub, nil
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return &sub, nil
 }
 
 func (r *SubscriptionRepository) Delete(ctx context.Context, id uuid.UUID) error {
@@ -166,7 +176,7 @@ func (r *SubscriptionRepository) Delete(ctx context.Context, id uuid.UUID) error
 func (r *SubscriptionRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]models.Subscription, error) {
 	var subs []models.Subscription
 
-	query := `SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC`
+	query := `SELECT ` + selectCols + ` FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC`
 
 	err := r.db.SelectContext(ctx, &subs, query, userID)
 	if err != nil {
