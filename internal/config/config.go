@@ -12,8 +12,8 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string
-	Port string
+	Host    string
+	Port    string
 	Timeout time.Duration
 }
 
@@ -48,6 +48,7 @@ func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return defaultValue
 }
 
@@ -57,5 +58,6 @@ func getEnvInt(key string, defaultValue int) int {
 			return intValue
 		}
 	}
+
 	return defaultValue
 }

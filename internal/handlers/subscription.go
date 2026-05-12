@@ -214,6 +214,7 @@ func (h *SubscriptionHandler) Delete(c *gin.Context) {
 			response.NotFound(c, "subscription not found")
 			return
 		}
+
 		response.InternalError(c, "failed to delete subscription")
 		return
 	}

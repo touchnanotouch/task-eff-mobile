@@ -3,7 +3,10 @@
 COMPOSE_FILE = docker-compose.yml
 
 help:
-	@echo "Commands: up, down, restart, logs, clean, shell, db, migrate"
+	@echo "Commands: up, down, restart, logs, clean, shell, db, migrate, test"
+
+swag:
+	swag init -g cmd/server/main.go
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d

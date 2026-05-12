@@ -37,6 +37,7 @@ func main() {
 	log.Println("Connected to database successfully")
 
 	gin.SetMode(gin.ReleaseMode)
+
 	router := gin.New()
 
 	router.Use(middleware.Logger())
@@ -51,6 +52,7 @@ func main() {
 
 	handler := handlers.NewSubscriptionHandler(repo)
 	api := router.Group("/api/v1")
+
 	handler.RegisterRoutes(api)
 
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
@@ -64,6 +66,7 @@ func main() {
 	go func() {
 		log.Printf("Server starting on %s", addr)
 		log.Printf("Swagger UI: http://localhost:8080/swagger/index.html")
+
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}

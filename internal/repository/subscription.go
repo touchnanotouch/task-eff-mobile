@@ -78,6 +78,7 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
+
 		return nil, err
 	}
 
@@ -117,6 +118,7 @@ func (r *SubscriptionRepository) Update(ctx context.Context, id uuid.UUID, req *
 	if req.EndDate != nil {
 		sub.EndDate = req.EndDate
 	}
+
 	sub.UpdatedAt = time.Now()
 
 	query := `
@@ -163,6 +165,7 @@ func (r *SubscriptionRepository) Delete(ctx context.Context, id uuid.UUID) error
 
 func (r *SubscriptionRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]models.Subscription, error) {
 	var subs []models.Subscription
+
 	query := `SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC`
 
 	err := r.db.SelectContext(ctx, &subs, query, userID)
@@ -175,6 +178,7 @@ func (r *SubscriptionRepository) GetByUserID(ctx context.Context, userID uuid.UU
 
 func (r *SubscriptionRepository) GetTotalCostByUserID(ctx context.Context, userID uuid.UUID) (int, error) {
 	var total sql.NullInt64
+
 	query := `SELECT SUM(price) FROM subscriptions WHERE user_id = $1`
 
 	err := r.db.GetContext(ctx, &total, query, userID)

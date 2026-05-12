@@ -1,6 +1,6 @@
 
 ```
-task_eff_mobile
+task-eff-mobile
 ├─ cmd
 │  └─ server
 │     └─ main.go
@@ -8,9 +8,6 @@ task_eff_mobile
 │  └─ Dockerfile
 ├─ docker-compose.yml
 ├─ docs
-│  ├─ docs.go
-│  ├─ swagger.json
-│  └─ swagger.yaml
 ├─ go.mod
 ├─ go.sum
 ├─ internal
@@ -31,6 +28,6 @@ task_eff_mobile
 │  └─ response
 │     └─ response.go
 ├─ README.md
-└─ task.md
+└─ TASK.md
 
 ```

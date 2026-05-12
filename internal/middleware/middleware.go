@@ -30,6 +30,7 @@ func Recovery() gin.HandlerFunc {
 				c.AbortWithStatusJSON(500, gin.H{"error": "internal_server_error"})
 			}
 		}()
+
 		c.Next()
 	}
 }
