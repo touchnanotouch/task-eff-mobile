@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,11 +27,49 @@ func (h *SubscriptionHandler) RegisterRoutes(r *gin.RouterGroup) {
 	{
 		subs.POST("", h.Create)
 		subs.GET("", h.GetAll)
+		subs.GET("/aggregate", h.Aggregate)
 		subs.GET("/:id", h.GetByID)
 		subs.PUT("/:id", h.Update)
 		subs.DELETE("/:id", h.Delete)
 		subs.GET("/user/:user_id", h.GetByUserID)
 	}
+}
+
+func toMonths(mmYYYY string) int {
+	month, _ := strconv.Atoi(mmYYYY[:2])
+	year, _ := strconv.Atoi(mmYYYY[3:])
+
+	return year*12 + month
+}
+
+func maxMonths(a, b string) string {
+	if toMonths(a) > toMonths(b) {
+		return a
+	}
+
+	return b
+}
+
+func minMonths(a, b string) string {
+	if toMonths(a) < toMonths(b) {
+		return a
+	}
+
+	return b
+}
+
+func overlapMonths(subStart, subEnd, qStart, qEnd string) int {
+	oStart := maxMonths(subStart, qStart)
+	oEnd := minMonths(subEnd, qEnd)
+
+	sM := toMonths(oStart)
+	eM := toMonths(oEnd)
+
+	if eM < sM {
+		return 0
+	}
+
+	return eM - sM + 1
 }
 
 var dateRegex = regexp.MustCompile(`^(0[1-9]|1[0-2])-[0-9]{4}$`)
@@ -219,6 +258,91 @@ func (h *SubscriptionHandler) Delete(c *gin.Context) {
 	}
 
 	response.NoContent(c)
+}
+
+// Aggregate godoc
+// @Summary Aggregate subscription costs over a period
+// @Description Calculate total cost of all subscriptions active during the specified period, with optional filters
+// @Tags subscriptions
+// @Produce json
+// @Param start_date query string true "Start of period (MM-YYYY)"
+// @Param end_date query string true "End of period (MM-YYYY)"
+// @Param user_id query string false "Filter by user UUID"
+// @Param service_name query string false "Filter by service name"
+// @Success 200 {object} models.AggregateResponse
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 422 {object} response.ErrorResponse
+// @Failure 500 {object} response.ErrorResponse
+// @Router /api/v1/subscriptions/aggregate [get]
+func (h *SubscriptionHandler) Aggregate(c *gin.Context) {
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	if startDate == "" || endDate == "" {
+		response.ValidationError(c, "start_date and end_date are required")
+		return
+	}
+
+	if !dateRegex.MatchString(startDate) {
+		response.ValidationError(c, "start_date must be in MM-YYYY format")
+		return
+	}
+
+	if !dateRegex.MatchString(endDate) {
+		response.ValidationError(c, "end_date must be in MM-YYYY format")
+		return
+	}
+
+	if toMonths(startDate) > toMonths(endDate) {
+		response.ValidationError(c, "start_date must be before or equal to end_date")
+		return
+	}
+
+	var userID *uuid.UUID
+
+	userIDStr := c.Query("user_id")
+	if userIDStr != "" {
+		uid, err := uuid.Parse(userIDStr)
+		if err != nil {
+			response.ValidationError(c, "invalid user_id format")
+			return
+		}
+
+		userID = &uid
+	}
+
+	var serviceName *string
+
+	sn := c.Query("service_name")
+	if sn != "" {
+		serviceName = &sn
+	}
+
+	subs, err := h.repo.GetSubscriptionsByPeriod(c.Request.Context(), startDate, endDate, userID, serviceName)
+	if err != nil {
+		response.InternalError(c, "failed to get subscriptions")
+		return
+	}
+
+	totalCost := 0
+	for _, sub := range subs {
+		subEnd := endDate
+		if sub.EndDate != nil {
+			subEnd = *sub.EndDate
+		}
+
+		overlap := overlapMonths(sub.StartDate, subEnd, startDate, endDate)
+		totalCost += sub.Price * overlap
+	}
+
+	resp := models.AggregateResponse{
+		TotalCost:     totalCost,
+		PeriodStart:   startDate,
+		PeriodEnd:     endDate,
+		Subscriptions: subs,
+	}
+
+	response.Success(c, http.StatusOK, resp)
 }
 
 // GetByUserID godoc

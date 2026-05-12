@@ -88,7 +88,7 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 }
 
 func (r *SubscriptionRepository) GetAll(ctx context.Context) ([]models.Subscription, error) {
-	var subs []models.Subscription
+	subs := make([]models.Subscription, 0)
 	query := `SELECT ` + selectCols + ` FROM subscriptions ORDER BY created_at DESC`
 
 	err := r.db.SelectContext(ctx, &subs, query)
@@ -174,11 +174,43 @@ func (r *SubscriptionRepository) Delete(ctx context.Context, id uuid.UUID) error
 }
 
 func (r *SubscriptionRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]models.Subscription, error) {
-	var subs []models.Subscription
+	subs := make([]models.Subscription, 0)
 
 	query := `SELECT ` + selectCols + ` FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC`
 
 	err := r.db.SelectContext(ctx, &subs, query, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return subs, nil
+}
+
+func (r *SubscriptionRepository) GetSubscriptionsByPeriod(ctx context.Context, startDate, endDate string, userID *uuid.UUID, serviceName *string) ([]models.Subscription, error) {
+	subs := make([]models.Subscription, 0)
+
+	query := `SELECT ` + selectCols + ` FROM subscriptions
+		WHERE TO_DATE('01-' || start_date, 'DD-MM-YYYY') <= TO_DATE('01-' || $1, 'DD-MM-YYYY')
+		AND (end_date IS NULL OR TO_DATE('01-' || end_date, 'DD-MM-YYYY') >= TO_DATE('01-' || $2, 'DD-MM-YYYY'))`
+
+	args := []any{endDate, startDate}
+	argIdx := 3
+
+	if userID != nil {
+		query += fmt.Sprintf(` AND user_id = $%d`, argIdx)
+		args = append(args, *userID)
+		argIdx++
+	}
+
+	if serviceName != nil {
+		query += fmt.Sprintf(` AND service_name = $%d`, argIdx)
+		args = append(args, *serviceName)
+		argIdx++
+	}
+
+	query += ` ORDER BY created_at DESC`
+
+	err := r.db.SelectContext(ctx, &subs, query, args...)
 	if err != nil {
 		return nil, err
 	}

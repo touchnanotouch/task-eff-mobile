@@ -37,3 +37,10 @@ type UserSubscriptionsResponse struct {
 	TotalCost     int            `json:"total_cost"`
 	Subscriptions []Subscription `json:"subscriptions"`
 }
+
+type AggregateResponse struct {
+	TotalCost     int            `json:"total_cost"`
+	PeriodStart   string         `json:"period_start"`
+	PeriodEnd     string         `json:"period_end"`
+	Subscriptions []Subscription `json:"subscriptions"`
+}
