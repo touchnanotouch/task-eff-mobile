@@ -52,7 +52,7 @@ jobs:
         run: go build ./cmd/server/
 
   docker:
-    if: github.ref == "refs/heads/main"
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     needs: [lint, test, build]
     steps:
