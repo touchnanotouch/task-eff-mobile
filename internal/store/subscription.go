@@ -110,7 +110,7 @@ func (s *SubscriptionStore) Update(ctx context.Context, sub *model.Subscription)
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var existing model.Subscription
 
