@@ -3,7 +3,7 @@
 COMPOSE_FILE = docker-compose.yml
 
 help:
-	@echo "Commands: up, down, restart, logs, clean, shell, db, migrate, test"
+	@echo "Commands: swag, up, down, restart, logs, clean, shell, db, migrate-up, migrate-down, test"
 
 swag:
 	swag init -g cmd/server/main.go
@@ -32,5 +32,11 @@ shell:
 db:
 	docker compose -f $(COMPOSE_FILE) exec postgres psql -U postgres -d subscriptions
 
-migrate:
-	docker compose -f $(COMPOSE_FILE) exec -T postgres psql -U postgres -d subscriptions < migrations/001_create_subscriptions.sql
+migrate-up:
+	docker compose -f $(COMPOSE_FILE) exec -T postgres psql -U postgres -d subscriptions < migrations/001_create_subscriptions.up.sql
+
+migrate-down:
+	docker compose -f $(COMPOSE_FILE) exec -T postgres psql -U postgres -d subscriptions < migrations/001_create_subscriptions.down.sql
+
+test:
+	go test ./...

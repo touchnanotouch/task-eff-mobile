@@ -1,14 +1,12 @@
 // @title Subscription Service API
 // @version 1.0.0
 // @description RESTful HTTP service for managing user subscriptions and cost aggregation
-// @host localhost:8080
 
 package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,79 +14,96 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
+	swaggerfiles "github.com/swaggo/files"
+	ginswagger "github.com/swaggo/gin-swagger"
 
 	_ "sub-service/docs"
 	"sub-service/internal/config"
-	"sub-service/internal/handlers"
+	"sub-service/internal/handler"
 	"sub-service/internal/middleware"
-	"sub-service/internal/repository"
+	"sub-service/internal/service"
+	"sub-service/internal/store"
 )
 
 func main() {
+	// 1. Load configuration
+
 	cfg := config.Load()
 
-	repo, err := repository.NewSubscriptionRepository(cfg.Database)
+	// 2. Setup structured logger
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	// 3. Connect to database
+
+	s, err := store.NewSubscriptionStore(cfg.Database)
 	if err != nil {
-		log.Fatalf("Failed to initialize repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Ping(context.Background()); err != nil {
-		log.Fatalf("Failed to ping database: %v", err)
+		logger.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("Connected to database successfully")
+	defer s.Close()
 
-	gin.SetMode(gin.ReleaseMode)
+	// 4. Initialize app layers
 
-	router := gin.New()
+	svc := service.NewSubscriptionService(s)
+	h := handler.NewSubscriptionHandler(svc)
 
-	router.Use(middleware.Logger())
-	router.Use(middleware.Recovery())
-	router.Use(middleware.CORS())
+	// 5. Setup router with middleware
 
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+	r := gin.New()
+	r.Use(
+		middleware.RequestID(),
+		middleware.Logger(logger),
+		middleware.CORS([]string{"http://localhost:3000", "http://localhost:5173"}),
+	)
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))
 
-	handler := handlers.NewSubscriptionHandler(repo)
-	api := router.Group("/api/v1")
+	api := r.Group("/api/v1")
+	h.RegisterRoutes(api)
 
-	handler.RegisterRoutes(api)
+	// 6. Configure HTTP server
 
-	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      router,
-		ReadTimeout:  cfg.Server.Timeout,
-		WriteTimeout: cfg.Server.Timeout,
+		Addr:    cfg.Server.Host + ":" + cfg.Server.Port,
+		Handler: r,
 	}
 
-	go func() {
-		log.Printf("Server starting on %s", addr)
-		log.Printf("Swagger UI: http://%s/swagger/index.html", addr)
+	// 7. Start server
 
+	go func() {
+		logger.Info("server starting", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+			logger.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
+
+	// 8. Wait for shutdown signal
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	logger.Info("shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 9. Graceful shutdown
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		logger.Error("server forced to shutdown", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("Server exited gracefully")
+	logger.Info("server exited")
 }

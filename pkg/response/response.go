@@ -11,12 +11,7 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-type SuccessResponse struct {
-	Data    interface{} `json:"data,omitempty"`
-	Message string     `json:"message,omitempty"`
-}
-
-func Success(c *gin.Context, statusCode int, data interface{}) {
+func Success(c *gin.Context, statusCode int, data any) {
 	c.JSON(statusCode, data)
 }
 

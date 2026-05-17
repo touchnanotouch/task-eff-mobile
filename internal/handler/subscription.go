@@ -1,7 +1,7 @@
-package handlers
+package handler
 
 import (
-	"database/sql"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -9,21 +9,24 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"sub-service/internal/models"
-	"sub-service/internal/repository"
+	"sub-service/internal/model"
+	"sub-service/internal/service"
 	"sub-service/pkg/response"
 )
 
 type SubscriptionHandler struct {
-	repo *repository.SubscriptionRepository
+	svc *service.SubscriptionService
 }
 
-func NewSubscriptionHandler(repo *repository.SubscriptionRepository) *SubscriptionHandler {
-	return &SubscriptionHandler{repo: repo}
+var dateRegex = regexp.MustCompile(`^(0[1-9]|1[0-2])-[0-9]{4}$`)
+
+func NewSubscriptionHandler(svc *service.SubscriptionService) *SubscriptionHandler {
+	return &SubscriptionHandler{svc: svc}
 }
 
 func (h *SubscriptionHandler) RegisterRoutes(r *gin.RouterGroup) {
 	subs := r.Group("/subscriptions")
+
 	{
 		subs.POST("", h.Create)
 		subs.GET("", h.GetAll)
@@ -35,59 +38,21 @@ func (h *SubscriptionHandler) RegisterRoutes(r *gin.RouterGroup) {
 	}
 }
 
-func toMonths(mmYYYY string) int {
-	month, _ := strconv.Atoi(mmYYYY[:2])
-	year, _ := strconv.Atoi(mmYYYY[3:])
-
-	return year*12 + month
-}
-
-func maxMonths(a, b string) string {
-	if toMonths(a) > toMonths(b) {
-		return a
-	}
-
-	return b
-}
-
-func minMonths(a, b string) string {
-	if toMonths(a) < toMonths(b) {
-		return a
-	}
-
-	return b
-}
-
-func overlapMonths(subStart, subEnd, qStart, qEnd string) int {
-	oStart := maxMonths(subStart, qStart)
-	oEnd := minMonths(subEnd, qEnd)
-
-	sM := toMonths(oStart)
-	eM := toMonths(oEnd)
-
-	if eM < sM {
-		return 0
-	}
-
-	return eM - sM + 1
-}
-
-var dateRegex = regexp.MustCompile(`^(0[1-9]|1[0-2])-[0-9]{4}$`)
-
 // Create godoc
 // @Summary Create a new subscription
 // @Description Create a new subscription for a user
 // @Tags subscriptions
 // @Accept json
 // @Produce json
-// @Param subscription body models.CreateSubscriptionRequest true "Subscription data"
-// @Success 201 {object} models.Subscription
+// @Param subscription body handler.CreateRequest true "Subscription data"
+// @Success 201 {object} handler.SubscriptionResponse
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 422 {object} response.ErrorResponse
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions [post]
 func (h *SubscriptionHandler) Create(c *gin.Context) {
-	var req models.CreateSubscriptionRequest
+	var req CreateRequest
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.ValidationError(c, err.Error())
 		return
@@ -105,42 +70,60 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 
 	userID, err := uuid.Parse(req.UserID)
 	if err != nil {
-		response.ValidationError(c, "invalid user_id format, must be UUID")
+		response.ValidationError(c, "invalid user_id format")
 		return
 	}
 
-	sub := &models.Subscription{
-		ServiceName: req.ServiceName,
-		Price:       req.Price,
-		UserID:      userID,
-		StartDate:   req.StartDate,
-		EndDate:     req.EndDate,
-	}
+	sub, err := h.svc.Create(
+		c.Request.Context(), userID, req.ServiceName, req.Price, req.StartDate, req.EndDate,
+	)
 
-	if err := h.repo.Create(c.Request.Context(), sub); err != nil {
-		response.InternalError(c, "failed to create subscription")
+	if err != nil {
+		response.InternalError(c, err.Error())
 		return
 	}
 
-	response.Created(c, sub)
+	response.Created(c, toSubscriptionResponse(*sub))
 }
 
 // GetAll godoc
 // @Summary Get all subscriptions
-// @Description Get list of all subscriptions
+// @Description Get paginated list of all subscriptions
 // @Tags subscriptions
 // @Produce json
-// @Success 200 {object} map[string][]models.Subscription
+// @Param page query int false "Page number (default: 1)"
+// @Param limit query int false "Items per page (default: 10, max: 100)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions [get]
 func (h *SubscriptionHandler) GetAll(c *gin.Context) {
-	subs, err := h.repo.GetAll(c.Request.Context())
+	page := 1
+	limit := 10
+
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	subs, total, err := h.svc.GetAll(c.Request.Context(), page, limit)
 	if err != nil {
 		response.InternalError(c, "failed to get subscriptions")
 		return
 	}
 
-	response.Success(c, http.StatusOK, gin.H{"subscriptions": subs})
+	response.Success(c, http.StatusOK, gin.H{
+		"subscriptions": toSubscriptionResponses(subs),
+		"total":         total,
+		"page":          page,
+		"limit":         limit,
+	})
 }
 
 // GetByID godoc
@@ -149,31 +132,29 @@ func (h *SubscriptionHandler) GetAll(c *gin.Context) {
 // @Tags subscriptions
 // @Produce json
 // @Param id path string true "Subscription UUID"
-// @Success 200 {object} models.Subscription
+// @Success 200 {object} handler.SubscriptionResponse
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions/{id} [get]
 func (h *SubscriptionHandler) GetByID(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		response.ValidationError(c, "invalid subscription id")
 		return
 	}
 
-	sub, err := h.repo.GetByID(c.Request.Context(), id)
+	sub, err := h.svc.GetByID(c.Request.Context(), id)
 	if err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			response.NotFound(c, "subscription not found")
+			return
+		}
 		response.InternalError(c, "failed to get subscription")
 		return
 	}
 
-	if sub == nil {
-		response.NotFound(c, "subscription not found")
-		return
-	}
-
-	response.Success(c, http.StatusOK, sub)
+	response.Success(c, http.StatusOK, toSubscriptionResponse(*sub))
 }
 
 // Update godoc
@@ -183,22 +164,22 @@ func (h *SubscriptionHandler) GetByID(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Subscription UUID"
-// @Param subscription body models.UpdateSubscriptionRequest true "Update data"
-// @Success 200 {object} models.Subscription
+// @Param subscription body handler.UpdateRequest true "Update data"
+// @Success 200 {object} handler.SubscriptionResponse
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
 // @Failure 422 {object} response.ErrorResponse
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions/{id} [put]
 func (h *SubscriptionHandler) Update(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		response.ValidationError(c, "invalid subscription id")
 		return
 	}
 
-	var req models.UpdateSubscriptionRequest
+	var req UpdateRequest
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.ValidationError(c, err.Error())
 		return
@@ -214,18 +195,20 @@ func (h *SubscriptionHandler) Update(c *gin.Context) {
 		return
 	}
 
-	sub, err := h.repo.Update(c.Request.Context(), id, &req)
+	sub, err := h.svc.Update(
+		c.Request.Context(), id, req.ServiceName, req.Price, req.StartDate, req.EndDate,
+	)
+
 	if err != nil {
-		response.InternalError(c, "failed to update subscription")
+		if errors.Is(err, model.ErrNotFound) {
+			response.NotFound(c, "subscription not found")
+			return
+		}
+		response.InternalError(c, err.Error())
 		return
 	}
 
-	if sub == nil {
-		response.NotFound(c, "subscription not found")
-		return
-	}
-
-	response.Success(c, http.StatusOK, sub)
+	response.Success(c, http.StatusOK, toSubscriptionResponse(*sub))
 }
 
 // Delete godoc
@@ -239,20 +222,18 @@ func (h *SubscriptionHandler) Update(c *gin.Context) {
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions/{id} [delete]
 func (h *SubscriptionHandler) Delete(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+	id, err := uuid.Parse(c.Param("id"))
+
 	if err != nil {
 		response.ValidationError(c, "invalid subscription id")
 		return
 	}
 
-	err = h.repo.Delete(c.Request.Context(), id)
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+		if errors.Is(err, model.ErrNotFound) {
 			response.NotFound(c, "subscription not found")
 			return
 		}
-
 		response.InternalError(c, "failed to delete subscription")
 		return
 	}
@@ -269,7 +250,7 @@ func (h *SubscriptionHandler) Delete(c *gin.Context) {
 // @Param end_date query string true "End of period (MM-YYYY)"
 // @Param user_id query string false "Filter by user UUID"
 // @Param service_name query string false "Filter by service name"
-// @Success 200 {object} models.AggregateResponse
+// @Success 200 {object} handler.AggregateResponse
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 422 {object} response.ErrorResponse
 // @Failure 500 {object} response.ErrorResponse
@@ -293,53 +274,43 @@ func (h *SubscriptionHandler) Aggregate(c *gin.Context) {
 		return
 	}
 
-	if toMonths(startDate) > toMonths(endDate) {
+	if monthKey(startDate) > monthKey(endDate) {
 		response.ValidationError(c, "start_date must be before or equal to end_date")
 		return
 	}
 
 	var userID *uuid.UUID
 
-	userIDStr := c.Query("user_id")
-	if userIDStr != "" {
-		uid, err := uuid.Parse(userIDStr)
+	if uid := c.Query("user_id"); uid != "" {
+		parsed, err := uuid.Parse(uid)
 		if err != nil {
 			response.ValidationError(c, "invalid user_id format")
 			return
 		}
 
-		userID = &uid
+		userID = &parsed
 	}
 
 	var serviceName *string
 
-	sn := c.Query("service_name")
-	if sn != "" {
+	if sn := c.Query("service_name"); sn != "" {
 		serviceName = &sn
 	}
 
-	subs, err := h.repo.GetSubscriptionsByPeriod(c.Request.Context(), startDate, endDate, userID, serviceName)
+	totalCost, subs, periodStart, periodEnd, err := h.svc.Aggregate(
+		c.Request.Context(), startDate, endDate, userID, serviceName,
+	)
+
 	if err != nil {
-		response.InternalError(c, "failed to get subscriptions")
+		response.InternalError(c, err.Error())
 		return
 	}
 
-	totalCost := 0
-	for _, sub := range subs {
-		subEnd := endDate
-		if sub.EndDate != nil {
-			subEnd = *sub.EndDate
-		}
-
-		overlap := overlapMonths(sub.StartDate, subEnd, startDate, endDate)
-		totalCost += sub.Price * overlap
-	}
-
-	resp := models.AggregateResponse{
+	resp := AggregateResponse{
 		TotalCost:     totalCost,
-		PeriodStart:   startDate,
-		PeriodEnd:     endDate,
-		Subscriptions: subs,
+		PeriodStart:   periodStart,
+		PeriodEnd:     periodEnd,
+		Subscriptions: toSubscriptionResponses(subs),
 	}
 
 	response.Success(c, http.StatusOK, resp)
@@ -347,39 +318,36 @@ func (h *SubscriptionHandler) Aggregate(c *gin.Context) {
 
 // GetByUserID godoc
 // @Summary Get subscriptions by user ID
-// @Description Get all subscriptions for a specific user with total cost aggregation
+// @Description Get all subscriptions for a specific user with total cost
 // @Tags subscriptions
 // @Produce json
 // @Param user_id path string true "User UUID"
-// @Success 200 {object} models.UserSubscriptionsResponse
+// @Success 200 {object} handler.UserSubscriptionsResponse
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 500 {object} response.ErrorResponse
 // @Router /api/v1/subscriptions/user/{user_id} [get]
 func (h *SubscriptionHandler) GetByUserID(c *gin.Context) {
-	userIDStr := c.Param("user_id")
-	userID, err := uuid.Parse(userIDStr)
+	userID, err := uuid.Parse(c.Param("user_id"))
 	if err != nil {
 		response.ValidationError(c, "invalid user_id format")
 		return
 	}
 
-	subs, err := h.repo.GetByUserID(c.Request.Context(), userID)
+	totalCost, subs, err := h.svc.GetByUserID(c.Request.Context(), userID)
 	if err != nil {
-		response.InternalError(c, "failed to get subscriptions")
+		response.InternalError(c, err.Error())
 		return
 	}
 
-	totalCost, err := h.repo.GetTotalCostByUserID(c.Request.Context(), userID)
-	if err != nil {
-		response.InternalError(c, "failed to calculate total cost")
-		return
-	}
-
-	resp := models.UserSubscriptionsResponse{
+	resp := UserSubscriptionsResponse{
 		UserID:        userID,
 		TotalCost:     totalCost,
-		Subscriptions: subs,
+		Subscriptions: toSubscriptionResponses(subs),
 	}
 
 	response.Success(c, http.StatusOK, resp)
+}
+
+func monthKey(s string) string {
+	return s[3:7] + s[0:2]
 }

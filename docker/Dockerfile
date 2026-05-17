@@ -11,6 +11,8 @@ RUN go mod download
 
 COPY . .
 
+RUN go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o ./docs
+
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -a -installsuffix cgo -o sub-service ./cmd/server
 
 # Stage 2
